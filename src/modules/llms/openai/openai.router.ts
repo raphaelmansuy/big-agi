@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 
 import { createTRPCRouter, publicProcedure } from '~/modules/trpc/trpc.server';
 
@@ -14,6 +15,7 @@ const accessSchema = z.object({
   oaiOrg: z.string().trim(),
   oaiHost: z.string().trim(),
   heliKey: z.string().trim(),
+  moderationCheck: z.boolean(),
 });
 
 const modelSchema = z.object({
@@ -44,6 +46,8 @@ const historySchema = z.array(z.object({
 export const chatGenerateSchema = z.object({ access: accessSchema, model: modelSchema, history: historySchema });
 export type ChatGenerateSchema = z.infer<typeof chatGenerateSchema>;
 
+export const chatModerationSchema = z.object({ access: accessSchema, text: z.string() });
+
 
 export const openAIRouter = createTRPCRouter({
 
@@ -58,17 +62,18 @@ export const openAIRouter = createTRPCRouter({
       const requestBody: OpenAI.Wire.ChatCompletion.Request = openAICompletionRequest(model, history, false);
       let wireCompletions: OpenAI.Wire.ChatCompletion.Response;
 
-      try {
-        wireCompletions = await openaiPOST<OpenAI.Wire.ChatCompletion.Request, OpenAI.Wire.ChatCompletion.Response>(access, requestBody, '/v1/chat/completions');
-      } catch (error: any) {
-        // don't log 429 errors, they are expected
-        if (!error || !(typeof error.startsWith === 'function') || !error.startsWith('Error: 429 · Too Many Requests'))
-          console.error('api/openai/chat error:', error);
-        throw error;
-      }
+      // try {
+      wireCompletions = await openaiPOST<OpenAI.Wire.ChatCompletion.Request, OpenAI.Wire.ChatCompletion.Response>(access, requestBody, '/v1/chat/completions');
+      // } catch (error: any) {
+      //   // NOTE: disabled on 2023-06-19: show all errors, 429 is not that common now, and could explain issues
+      //   // don't log 429 errors on the server-side, they are expected
+      //   if (!error || !(typeof error.startsWith === 'function') || !error.startsWith('Error: 429 · Too Many Requests'))
+      //     console.error('api/openai/chat error:', error);
+      //   throw error;
+      // }
 
       if (wireCompletions?.choices?.length !== 1)
-        throw new Error(`Expected 1 choice, got ${wireCompletions?.choices?.length}`);
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `[OpenAI Issue] Expected 1 completion, got ${wireCompletions?.choices?.length}` });
 
       const singleChoice = wireCompletions.choices[0];
       return {
@@ -76,6 +81,29 @@ export const openAIRouter = createTRPCRouter({
         content: singleChoice.message.content,
         finish_reason: singleChoice.finish_reason,
       };
+    }),
+
+  /**
+   * Check for content policy violations
+   */
+  moderation: publicProcedure
+    .input(chatModerationSchema)
+      .mutation(async ({ input }): Promise<OpenAI.Wire.Moderation.Response> => {
+      const { access, text, } = input;
+      try {
+
+        return await openaiPOST<OpenAI.Wire.Moderation.Request, OpenAI.Wire.Moderation.Response>(access, {
+          input: text,
+          model: 'text-moderation-latest',
+        }, '/v1/moderations');
+
+      } catch (error: any) {
+        if (error.code === 'ECONNRESET')
+          throw new TRPCError({ code: 'CLIENT_CLOSED_REQUEST', message: 'Connection reset by the client.' });
+
+        console.error('api/openai/moderation error:', error);
+        throw new TRPCError({ code: 'BAD_REQUEST', message: `Error: ${error?.message || error?.toString() || 'Unknown error'}` });
+      }
     }),
 
   /**
@@ -129,6 +157,20 @@ async function openaiGET<TOut>(access: AccessSchema, apiPath: string /*, signal?
 async function openaiPOST<TBody, TOut>(access: AccessSchema, body: TBody, apiPath: string /*, signal?: AbortSignal*/): Promise<TOut> {
   const { headers, url } = openAIAccess(access, apiPath);
   const response = await fetch(url, { headers, method: 'POST', body: JSON.stringify(body) });
+  if (!response.ok) {
+    let error: any | null = null;
+    try {
+      error = await response.json();
+    } catch (e) {
+      // ignore
+    }
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: error
+        ? `[OpenAI Issue] ${error?.error?.message || error?.error || error?.toString() || 'Unknown error'}`
+        : `[Issue] ${response.statusText}`,
+    });
+  }
   return await response.json() as TOut;
 }
 

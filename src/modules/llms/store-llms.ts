@@ -14,6 +14,7 @@ interface ModelsStore {
   sources: DModelSource[];
 
   setChatLLMId: (id: DLLMId | null) => void;
+  setFastLLMId: (id: DLLMId | null) => void;
 
   addLLMs: (llms: DLLM[]) => void;
   removeLLM: (id: DLLMId) => void;
@@ -37,7 +38,10 @@ export const useModelsStore = create<ModelsStore>()(
       sources: [],
 
       setChatLLMId: (id: DLLMId | null) =>
-        set({ chatLLMId: id }),
+        set(state => updateSelectedIds(state.llms, id, state.fastLLMId)),
+
+      setFastLLMId: (id: DLLMId | null) =>
+        set(state => updateSelectedIds(state.llms, state.chatLLMId, id)),
 
       // NOTE: make sure to the _source links (sId foreign) are already set before calling this
       // this will replace existing llms with the same id
@@ -132,7 +136,7 @@ export const useModelsStore = create<ModelsStore>()(
 
 
 const defaultChatSuffixPreference = ['gpt-4-0613', 'gpt-4', 'gpt-4-32k', 'gpt-3.5-turbo'];
-const defaultFastSuffixPreference = ['gpt-3.5-turbo-16k-0613', 'gpt-3.5-turbo-16k', 'gpt-3.5-turbo'];
+const defaultFastSuffixPreference = ['gpt-3.5-turbo-0613', 'gpt-3.5-turbo-16k-0613', 'gpt-3.5-turbo-16k', 'gpt-3.5-turbo'];
 
 function findLlmIdBySuffix(llms: DLLM[], suffixes: string[]): DLLMId | null {
   if (!llms?.length) return null;

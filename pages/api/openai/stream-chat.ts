@@ -67,6 +67,16 @@ async function chatStreamRepeater(access: ChatGenerateSchema['access'], model: C
       try {
         const json: OpenAI.Wire.ChatCompletion.ResponseStreamingChunk = JSON.parse(event.data);
 
+        // handle errors here
+        if (json.error) {
+          // suppress this new error that popped up on 2023-06-19
+          if (json.error.message !== 'The server had an error while processing your request. Sorry about that!')
+            console.error('stream-chat: unexpected error from upstream', json.error);
+          controller.enqueue(textEncoder.encode(`[OpenAI Issue] ${json.error.message}`));
+          controller.close();
+          return;
+        }
+
         // ignore any 'role' delta update
         if (json.choices[0].delta?.role && !json.choices[0].delta?.content)
           return;
@@ -92,7 +102,7 @@ async function chatStreamRepeater(access: ChatGenerateSchema['access'], model: C
 
       } catch (error) {
         // maybe parse error
-        console.error('Error parsing OpenAI response', error);
+        console.error('stream-chat: error parsing chunked response', error, event);
         controller.error(error);
       }
     });
