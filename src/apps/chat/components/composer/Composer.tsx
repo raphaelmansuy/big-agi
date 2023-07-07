@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { shallow } from 'zustand/shallow';
 
-import { Box, Button, Card, Grid, IconButton, ListDivider, ListItemDecorator, Menu, MenuItem, Stack, Textarea, Tooltip, Typography, useTheme } from '@mui/joy';
+import { Box, Button, ButtonGroup, Card, Grid, IconButton, ListDivider, ListItemDecorator, Menu, MenuItem, Stack, Textarea, Tooltip, Typography, useTheme } from '@mui/joy';
 import { ColorPaletteProp, SxProps, VariantProp } from '@mui/joy/styles/types';
 import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
 import DataArrayIcon from '@mui/icons-material/DataArray';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import FormatAlignCenterIcon from '@mui/icons-material/FormatAlignCenter';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import MicIcon from '@mui/icons-material/Mic';
@@ -29,8 +30,8 @@ import { pdfToText } from '~/common/util/pdfToText';
 import { useChatStore } from '~/common/state/store-chats';
 import { useUIPreferencesStore } from '~/common/state/store-ui';
 
-import { SendModeId } from '../../Chat';
-import { SendModeMenu } from './SendModeMenu';
+import { ChatModeId } from '../../AppChat';
+import { ChatModeMenu } from './ChatModeMenu';
 import { TokenBadge } from './TokenBadge';
 import { TokenProgressbar } from './TokenProgressbar';
 import { useComposerStore } from './store-composer';
@@ -115,7 +116,10 @@ const SentMessagesMenu = (props: {
     {props.messages.map((item, index) =>
       <MenuItem
         key={'composer-sent-' + index}
-        onClick={() => { props.onPaste(item.text); props.onClose(); }}
+        onClick={() => {
+          props.onPaste(item.text);
+          props.onClose();
+        }}
         sx={{ textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline', overflow: 'hidden' }}
       >
         {item.count > 1 && <span style={{ marginRight: 1 }}>({item.count})</span>} {item.text?.length > 70 ? item.text.slice(0, 68) + '...' : item.text}
@@ -144,25 +148,28 @@ const SentMessagesMenu = (props: {
  */
 export function Composer(props: {
   conversationId: string | null; messageId: string | null;
+  chatModeId: ChatModeId, setChatModeId: (chatModeId: ChatModeId) => void;
   isDeveloperMode: boolean;
-  onSendMessage: (sendModeId: SendModeId, conversationId: string, text: string) => void;
+  onSendMessage: (conversationId: string, text: string) => void;
   sx?: SxProps;
 }) {
   // state
   const [composeText, setComposeText] = React.useState('');
-  const [sendModeId, setSendModeId] = React.useState<SendModeId>('immediate');
   const [speechInterimResult, setSpeechInterimResult] = React.useState<SpeechResult | null>(null);
   const [isDragging, setIsDragging] = React.useState(false);
   const [reducerText, setReducerText] = React.useState('');
   const [reducerTextTokens, setReducerTextTokens] = React.useState(0);
-  const [sendModeMenuAnchor, setSendModeMenuAnchor] = React.useState<HTMLAnchorElement | null>(null);
+  const [chatModeMenuAnchor, setChatModeMenuAnchor] = React.useState<HTMLAnchorElement | null>(null);
   const [sentMessagesAnchor, setSentMessagesAnchor] = React.useState<HTMLAnchorElement | null>(null);
   const [confirmClearSent, setConfirmClearSent] = React.useState(false);
   const attachmentFileInputRef = React.useRef<HTMLInputElement>(null);
 
   // external state
   const theme = useTheme();
-  const enterToSend = useUIPreferencesStore(state => state.enterToSend);
+  const { enterToSend, goofyLabs } = useUIPreferencesStore(state => ({
+    enterToSend: state.enterToSend,
+    goofyLabs: state.goofyLabs,
+  }), shallow);
   const { sentMessages, appendSentMessage, clearSentMessages, startupText, setStartupText } = useComposerStore();
   const { assistantTyping, tokenCount: conversationTokenCount, stopTyping } = useChatStore(state => {
     const conversation = state.conversations.find(conversation => conversation.id === props.conversationId);
@@ -196,14 +203,20 @@ export function Composer(props: {
     const text = (composeText || '').trim();
     if (text.length && props.conversationId) {
       setComposeText('');
-      props.onSendMessage(sendModeId, props.conversationId, text);
+      props.onSendMessage(props.conversationId, text);
       appendSentMessage(text);
     }
   };
 
-  const handleShowSendMode = (event: React.MouseEvent<HTMLAnchorElement>) => setSendModeMenuAnchor(event.currentTarget);
+  const handleToggleChatMode = (event: React.MouseEvent<HTMLAnchorElement>) =>
+    setChatModeMenuAnchor(anchor => anchor ? null : event.currentTarget);
 
-  const handleHideSendMode = () => setSendModeMenuAnchor(null);
+  const handleHideChatMode = () => setChatModeMenuAnchor(null);
+
+  const handleSetChatModeId = (chatModeId: ChatModeId) => {
+    handleHideChatMode();
+    props.setChatModeId(chatModeId);
+  };
 
   const handleStopClicked = () => props.conversationId && stopTyping(props.conversationId);
 
@@ -415,7 +428,18 @@ export function Composer(props: {
     ? 'Tell me what you need, and drop source files...'
     : /*isProdiaConfigured ?*/ 'Chat · /react · /imagine · drop text files...' /*: 'Chat · /react · drop text files...'*/;
 
-  const isReAct = sendModeId === 'react';
+  const isImmediate = props.chatModeId === 'immediate';
+  const isFollowUp = props.chatModeId === 'immediate-follow-up';
+  const isReAct = props.chatModeId === 'react';
+
+  const chatButton = (
+    <Button
+      fullWidth variant='solid' color={isReAct ? 'info' : isFollowUp ? 'warning' : 'primary'} disabled={!props.conversationId || !chatLLM}
+      onClick={handleSendClicked} onDoubleClick={handleToggleChatMode} endDecorator={isReAct ? <PsychologyIcon /> : <TelegramIcon />}
+    >
+      {isReAct ? 'ReAct' : isFollowUp ? 'Chat+' : 'Chat'}
+    </Button>
+  );
 
   return (
     <Box sx={props.sx}>
@@ -571,14 +595,13 @@ export function Composer(props: {
                   >
                     Stop
                   </Button>
-                ) : (
-                  <Button
-                    fullWidth variant='solid' color={isReAct ? 'info' : 'primary'} disabled={!props.conversationId || !chatLLM}
-                    onClick={handleSendClicked} onDoubleClick={handleShowSendMode}
-                    endDecorator={isReAct ? <PsychologyIcon /> : <TelegramIcon />}
-                  >
-                    {isReAct ? 'ReAct' : 'Chat'}
-                  </Button>
+                ) : (!goofyLabs && isImmediate) ? chatButton : (
+                  <ButtonGroup variant='solid' color={isReAct ? 'info' : isFollowUp ? 'warning' : 'primary'} sx={{ flexGrow: 1 }}>
+                    {chatButton}
+                    <IconButton disabled={!props.conversationId || !chatLLM || !!chatModeMenuAnchor} onClick={handleToggleChatMode}>
+                      <ExpandLessIcon />
+                    </IconButton>
+                  </ButtonGroup>
                 )}
             </Box>
 
@@ -596,8 +619,8 @@ export function Composer(props: {
 
 
         {/* Mode selector */}
-        {!!sendModeMenuAnchor && (
-          <SendModeMenu anchorEl={sendModeMenuAnchor} sendMode={sendModeId} onSetSendMode={setSendModeId} onClose={handleHideSendMode} />
+        {!!chatModeMenuAnchor && (
+          <ChatModeMenu anchorEl={chatModeMenuAnchor} chatModeId={props.chatModeId} onSetChatModeId={handleSetChatModeId} onClose={handleHideChatMode} />
         )}
 
         {/* Sent messages menu */}

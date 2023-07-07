@@ -1,7 +1,7 @@
 import { DLLMId } from '~/modules/llms/llm.types';
 import { OpenAI } from '~/modules/llms/openai/openai.types';
 import { callApiSearchGoogle } from '~/modules/google/search.client';
-import { callChat } from '~/modules/llms/llm.client';
+import { callChatGenerate } from '~/modules/llms/llm.client';
 
 import { currentDate, reActPrompt } from '../prompts';
 
@@ -74,7 +74,7 @@ export class Agent {
     S.messages.push({ role: 'user', content: prompt });
     let content: string;
     try {
-      content = (await callChat(llmId, S.messages, 500)).content;
+      content = (await callChatGenerate(llmId, S.messages, 500)).content;
     } catch (error: any) {
       content = `Error in callChat: ${error}`;
     }
@@ -127,7 +127,7 @@ async function search(query: string): Promise<string> {
     return JSON.stringify(data);
   } catch (error) {
     console.error('Error fetching search results:', error);
-    return 'An error occurred while searching the internet. Missing API Key?';
+    return 'An error occurred while searching the internet. Missing Google API Key?';
   }
 }
 

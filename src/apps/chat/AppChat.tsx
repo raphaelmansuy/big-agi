@@ -15,7 +15,7 @@ import { Brand } from '~/common/brand';
 import { ConfirmationModal } from '~/common/components/ConfirmationModal';
 import { Link } from '~/common/components/Link';
 import { conversationToMarkdown } from '~/common/util/conversationToMarkdown';
-import { createDMessage, DMessage, restoreConversationFromJson, useChatStore } from '~/common/state/store-chats';
+import { createDMessage, DMessage, useChatStore } from '~/common/state/store-chats';
 import { extractCommands } from '~/common/util/extractCommands';
 import { useApplicationBarStore } from '~/common/layouts/appbar/store-applicationbar';
 import { useUIPreferencesStore } from '~/common/state/store-ui';
@@ -27,6 +27,7 @@ import { ConversationItems } from './components/appbar/ConversationItems';
 import { Dropdowns } from './components/appbar/Dropdowns';
 import { Ephemerals } from './components/Ephemerals';
 import { ImportedModal, ImportedOutcome } from './components/appbar/ImportedModal';
+import { restoreConversationFromJson } from './exportImport';
 import { runAssistantUpdatingState } from './editors/chat-stream';
 import { runImageGenerationUpdatingState } from './editors/image-generate';
 import { runReActUpdatingState } from './editors/react-tangent';
@@ -34,7 +35,22 @@ import { runReActUpdatingState } from './editors/react-tangent';
 
 const SPECIAL_ID_ALL_CHATS = 'all-chats';
 
-export type SendModeId = 'immediate' | 'react';
+// definition of chat modes
+export type ChatModeId = 'immediate' | 'immediate-follow-up' | 'react';
+export const ChatModeItems: { [key in ChatModeId]: { label: string; description: string | React.JSX.Element; } } = {
+  'immediate': {
+    label: 'Chat',
+    description: 'AI-powered direct responses',
+  },
+  'immediate-follow-up': {
+    label: 'Chat & Follow-up',
+    description: 'Chat with follow-up questions',
+  },
+  'react': {
+    label: 'Reason+Act',
+    description: 'Answer your questions with ReAct and search',
+  },
+};
 
 
 /// Returns a pretty link to the current page, for promo
@@ -49,9 +65,10 @@ function linkToOrigin() {
 }
 
 
-export function Chat() {
+export function AppChat() {
 
   // state
+  const [chatModeId, setChatModeId] = React.useState<ChatModeId>('immediate');
   const [isMessageSelectionMode, setIsMessageSelectionMode] = React.useState(false);
   const [clearConfirmationId, setClearConfirmationId] = React.useState<string | null>(null);
   const [deleteConfirmationId, setDeleteConfirmationId] = React.useState<string | null>(null);
@@ -77,7 +94,7 @@ export function Chat() {
   }, shallow);
 
 
-  const handleExecuteConversation = async (sendModeId: SendModeId, conversationId: string, history: DMessage[]) => {
+  const handleExecuteConversation = async (chatModeId: ChatModeId, conversationId: string, history: DMessage[]) => {
     const { chatLLMId } = useModelsStore.getState();
     if (!conversationId || !chatLLMId) return;
 
@@ -102,10 +119,11 @@ export function Chat() {
     }
 
     // synchronous long-duration tasks, which update the state as they go
-    if (sendModeId && chatLLMId && systemPurposeId) {
-      switch (sendModeId) {
+    if (chatModeId && chatLLMId && systemPurposeId) {
+      switch (chatModeId) {
         case 'immediate':
-          return await runAssistantUpdatingState(conversationId, history, chatLLMId, systemPurposeId);
+        case 'immediate-follow-up':
+          return await runAssistantUpdatingState(conversationId, history, chatLLMId, systemPurposeId, true, chatModeId === 'immediate-follow-up');
         case 'react':
           if (lastMessage?.text) {
             setMessages(conversationId, history);
@@ -121,11 +139,14 @@ export function Chat() {
   const _findConversation = (conversationId: string) =>
     conversationId ? useChatStore.getState().conversations.find(c => c.id === conversationId) ?? null : null;
 
-  const handleSendUserMessage = async (sendModeId: SendModeId, conversationId: string, userText: string) => {
+  const handleSendUserMessage = async (conversationId: string, userText: string) => {
     const conversation = _findConversation(conversationId);
     if (conversation)
-      return await handleExecuteConversation(sendModeId, conversationId, [...conversation.messages, createDMessage('user', userText)]);
+      return await handleExecuteConversation(chatModeId, conversationId, [...conversation.messages, createDMessage('user', userText)]);
   };
+
+  const handleExecuteChatHistory = async (conversationId: string, history: DMessage[]) =>
+    await handleExecuteConversation(chatModeId, conversationId, history);
 
   const handleImagineFromText = async (conversationId: string, messageText: string) => {
     const conversation = _findConversation(conversationId);
@@ -256,7 +277,7 @@ export function Chat() {
     <ChatMessageList
       conversationId={activeConversationId}
       isMessageSelectionMode={isMessageSelectionMode} setIsMessageSelectionMode={setIsMessageSelectionMode}
-      onExecuteConversation={handleExecuteConversation}
+      onExecuteChatHistory={handleExecuteChatHistory}
       onImagineFromText={handleImagineFromText}
       sx={{
         flexGrow: 1,
@@ -276,6 +297,7 @@ export function Chat() {
 
     <Composer
       conversationId={activeConversationId} messageId={null}
+      chatModeId={chatModeId} setChatModeId={setChatModeId}
       isDeveloperMode={systemPurposeId === 'Developer'}
       onSendMessage={handleSendUserMessage}
       sx={{
